@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # Redis for Celery
+  redis:
+    image: redis:7-alpine
+    container_name: apm-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apm-network
+
+  # Flask Application
+  flask-app:
+    build: .
+    container_name: apm-flask
+    command: python flask_apm.py
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - ELASTIC_APM_SERVICE_NAME=flask-apm-demo
+    volumes:
+      - ./:/app
+      - flask-data:/app/data
+    depends_on:
+      - redis
+    networks:
+      - apm-network
+    restart: unless-stopped
+
+  # FastAPI Application
+  fastapi-app:
+    build: .
+    container_name: apm-fastapi
+    command: uvicorn fastapi_apm:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - ELASTIC_APM_SERVICE_NAME=fastapi-apm-demo
+    volumes:
+      - ./:/app
+    depends_on:
+      - redis
+    networks:
+      - apm-network
+    restart: unless-stopped
+
+  # Celery Worker
+  celery-worker:
+    build: .
+    container_name: apm-celery-worker
+    command: celery -A celery_worker_apm worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      - ELASTIC_APM_SERVICE_NAME=celery-worker-apm-demo
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./:/app
+    depends_on:
+      - redis
+    networks:
+      - apm-network
+    restart: unless-stopped
+
+  # Batch Job Runner (runs once and exits)
+  batch-job:
+    build: .
+    container_name: apm-batch-job
+    command: python func_apm.py
+    env_file:
+      - .env
+    environment:
+      - ELASTIC_APM_SERVICE_NAME=batch-job-apm-demo
+    volumes:
+      - ./:/app
+      - batch-data:/app/data
+    networks:
+      - apm-network
+    profiles:
+      - batch  # Only runs when explicitly specified
+
+volumes:
+  flask-data:
+  batch-data:
+
+networks:
+  apm-network:
+    driver: bridge
